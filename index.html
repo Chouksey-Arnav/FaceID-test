@@ -4,29 +4,18 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-    <!-- Primary meta -->
-    <title>MedSchoolPrep — MCAT & Admissions AI Coach</title>
+    <title>MedSchoolPrep — MCAT &amp; Admissions AI Coach</title>
     <meta name="description" content="AI-powered MCAT preparation and medical school admissions coaching with Face ID login, flashcards, MMI practice, and more." />
     <meta name="theme-color" content="#04060b" />
 
-    <!-- Open Graph -->
     <meta property="og:title" content="MedSchoolPrep" />
     <meta property="og:description" content="AI-powered MCAT + admissions coaching" />
     <meta property="og:type" content="website" />
 
-    <!-- Favicon (placeholder — replace with your actual icon) -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="icon" type="image/png" href="/favicon.ico" />
 
-    <!--
-      Google Fonts
-      These font families are referenced by the design tokens in App.jsx:
-        C.FD  = 'Bricolage Grotesque'
-        C.FB  = 'Onest'
-        C.FM  = 'JetBrains Mono'
-      Without this link tag the UI falls back to system-ui — no build error,
-      but the design looks very different from intent.
-    -->
+    <!-- Google Fonts: Bricolage Grotesque (C.FD), Onest (C.FB), JetBrains Mono (C.FM) -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -34,22 +23,13 @@
       rel="stylesheet"
     />
 
-    <!-- KaTeX stylesheet (also imported in App.jsx but belt-and-suspenders for SSR/hydration) -->
-    <link
-      rel="stylesheet"
-      href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css"
-      crossorigin="anonymous"
-    />
-
     <style>
-      /* Prevent flash of unstyled background before React mounts */
       html, body, #root {
         margin: 0;
         padding: 0;
         background: #04060b;
         min-height: 100vh;
       }
-      /* Hide scrollbar on Webkit (decorative — the app manages overflow) */
       ::-webkit-scrollbar { width: 6px; }
       ::-webkit-scrollbar-track { background: transparent; }
       ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 3px; }
@@ -58,11 +38,6 @@
   </head>
   <body>
     <div id="root"></div>
-
-    <!--
-      Vite replaces this with the correct hashed bundle path at build time.
-      The /src/main.jsx entry point renders <App /> into #root.
-    -->
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
