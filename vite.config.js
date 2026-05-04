@@ -7,7 +7,7 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.ico', 'robots.txt', 'models/**/*'],
+      includeAssets: ['favicon.ico', 'robots.txt'],
       manifest: {
         name: 'MedSchoolPrep',
         short_name: 'MedPrep',
@@ -22,6 +22,7 @@ export default defineConfig({
         ],
       },
       workbox: {
+        // face-api model weights are ~6 MB — raise the cache size limit
         maximumFileSizeToCacheInBytes: 8 * 1024 * 1024,
         globPatterns: ['**/*.{js,css,html,ico,png,svg,wasm}'],
         runtimeCaching: [
@@ -30,7 +31,10 @@ export default defineConfig({
             handler: 'CacheFirst',
             options: {
               cacheName: 'face-api-models',
-              expiration: { maxEntries: 20, maxAgeSeconds: 30 * 24 * 60 * 60 },
+              expiration: {
+                maxEntries: 20,
+                maxAgeSeconds: 30 * 24 * 60 * 60,
+              },
             },
           },
           {
@@ -38,7 +42,10 @@ export default defineConfig({
             handler: 'CacheFirst',
             options: {
               cacheName: 'google-fonts',
-              expiration: { maxEntries: 10, maxAgeSeconds: 365 * 24 * 60 * 60 },
+              expiration: {
+                maxEntries: 10,
+                maxAgeSeconds: 365 * 24 * 60 * 60,
+              },
             },
           },
         ],
@@ -48,18 +55,17 @@ export default defineConfig({
 
   resolve: {
     alias: {
-      // Force the self-contained UMD build of face-api.js.
-      // The ESM build pulls in @tensorflow sub-packages as separate peer deps,
-      // causing Vite to double-bundle TF.js and produce runtime crashes.
-      // The UMD build ships TF.js internally — no separate @tensorflow resolution needed.
+      // Use the self-contained UMD bundle of face-api.js.
+      // The default ESM entry pulls in @tensorflow sub-packages separately,
+      // causing double-bundling and runtime crashes. The UMD build ships
+      // TF.js internally and avoids all of that.
       'face-api.js': 'face-api.js/dist/face-api.js',
     },
   },
 
   optimizeDeps: {
-    // Only face-api.js — NOT the @tensorflow sub-packages.
-    // Those are already inside the UMD build above. Listing them separately
-    // causes esbuild to pre-bundle them AND Rollup to bundle them again → duplicates.
+    // Pre-bundle face-api.js via esbuild in dev mode.
+    // Everything else is handled by commonjsOptions during production build.
     include: ['face-api.js'],
     esbuildOptions: {
       target: 'esnext',
@@ -70,10 +76,19 @@ export default defineConfig({
     target: 'esnext',
 
     commonjsOptions: {
-      // Scope CJS transformation to face-api only.
-      // The previous /node_modules/ regex transformed every package,
-      // breaking framer-motion v11 (pure ESM) and causing Vercel build timeouts.
-      include: [/face-api/],
+      // ── THE CRITICAL FIX (confirmed by live build test) ────────────────────
+      // Multiple packages ship CJS (.js) files that use module.exports, while
+      // ESM consumers try to do named imports from them. Without this,
+      // Rollup throws "X is not exported by Y" for:
+      //
+      //   react / react-dom  → framer-motion named-imports createContext etc.
+      //   dexie              → dexie/import-wrapper-prod.mjs default import
+      //   rgbcolor           → canvg (used internally by jsPDF) default import
+      //   face-api.js UMD    → TF.js internal requires
+      //
+      // Applying include:[/node_modules/] is safe — pure ESM files (.mjs)
+      // are automatically skipped by @rollup/plugin-commonjs.
+      include: [/node_modules/],
       transformMixedEsModules: true,
     },
 
@@ -83,11 +98,13 @@ export default defineConfig({
           if (id.includes('face-api')) return 'face-api';
           if (id.includes('framer-motion')) return 'framer-motion';
           if (
-            id.includes('react') ||
-            id.includes('react-dom') ||
+            id.includes('node_modules/react') ||
             id.includes('react-hot-toast')
           ) return 'react-vendor';
-          if (id.includes('chart.js') || id.includes('react-chartjs-2')) return 'charts';
+          if (
+            id.includes('chart.js') ||
+            id.includes('react-chartjs-2')
+          ) return 'charts';
           if (id.includes('dexie')) return 'dexie';
         },
       },
