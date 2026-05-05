@@ -7,7 +7,7 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.ico', 'robots.txt'],
+      includeAssets: ['favicon.ico', 'robots.txt', 'models/**/*'],
       manifest: {
         name: 'MedSchoolPrep',
         short_name: 'MedPrep',
@@ -22,7 +22,6 @@ export default defineConfig({
         ],
       },
       workbox: {
-        // face-api model weights are ~6 MB — raise the cache size limit
         maximumFileSizeToCacheInBytes: 8 * 1024 * 1024,
         globPatterns: ['**/*.{js,css,html,ico,png,svg,wasm}'],
         runtimeCaching: [
@@ -31,10 +30,7 @@ export default defineConfig({
             handler: 'CacheFirst',
             options: {
               cacheName: 'face-api-models',
-              expiration: {
-                maxEntries: 20,
-                maxAgeSeconds: 30 * 24 * 60 * 60,
-              },
+              expiration: { maxEntries: 20, maxAgeSeconds: 30 * 24 * 60 * 60 },
             },
           },
           {
@@ -42,10 +38,7 @@ export default defineConfig({
             handler: 'CacheFirst',
             options: {
               cacheName: 'google-fonts',
-              expiration: {
-                maxEntries: 10,
-                maxAgeSeconds: 365 * 24 * 60 * 60,
-              },
+              expiration: { maxEntries: 10, maxAgeSeconds: 365 * 24 * 60 * 60 },
             },
           },
         ],
@@ -64,8 +57,6 @@ export default defineConfig({
   },
 
   optimizeDeps: {
-    // Pre-bundle face-api.js via esbuild in dev mode.
-    // Everything else is handled by commonjsOptions during production build.
     include: ['face-api.js'],
     esbuildOptions: {
       target: 'esnext',
@@ -76,18 +67,25 @@ export default defineConfig({
     target: 'esnext',
 
     commonjsOptions: {
-      // ── THE CRITICAL FIX (confirmed by live build test) ────────────────────
-      // Multiple packages ship CJS (.js) files that use module.exports, while
-      // ESM consumers try to do named imports from them. Without this,
-      // Rollup throws "X is not exported by Y" for:
+      // ── THIS IS THE FIX — confirmed by running vite build locally ───────────
       //
-      //   react / react-dom  → framer-motion named-imports createContext etc.
-      //   dexie              → dexie/import-wrapper-prod.mjs default import
-      //   rgbcolor           → canvg (used internally by jsPDF) default import
-      //   face-api.js UMD    → TF.js internal requires
+      // The previous config had:  include: [/face-api/]
+      // That only transformed face-api.js, leaving these CJS packages
+      // untransformed, which caused Rollup to throw during the Vercel build:
       //
-      // Applying include:[/node_modules/] is safe — pure ESM files (.mjs)
-      // are automatically skipped by @rollup/plugin-commonjs.
+      //   "createContext" is not exported by node_modules/react/index.js
+      //      framer-motion v11 does named ESM imports from React (CJS)
+      //
+      //   "default" is not exported by node_modules/dexie/dist/...
+      //      Dexie v4's ESM wrapper imports from its own CJS default
+      //
+      //   "default" is not exported by node_modules/rgbcolor/index.js
+      //      canvg (used inside jsPDF) does a default import from CJS rgbcolor
+      //
+      // Setting include:[/node_modules/] tells @rollup/plugin-commonjs to
+      // transform ALL CJS files in node_modules. Pure-ESM files (.mjs) are
+      // automatically skipped by the plugin regardless of this setting —
+      // so framer-motion's own .mjs files are never touched.
       include: [/node_modules/],
       transformMixedEsModules: true,
     },
