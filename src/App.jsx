@@ -14,15 +14,14 @@ import { ELIB } from './data/elib';
 import { PATHS, FLASH_DECKS, SCHOOL_DATA, MMI_QS, COMPETITIONS, DIAG_QS } from './data/constants';
 
 import * as DB from './lib/db';
-import { scheduleCard, getDueCards, sortForStudy, nextReviewLabel, getRetainability, STATE_LABELS } from './lib/fsrs';
-import { buildQuizSearch, buildLibrarySearch, buildDeckSearch, fuseSearch } from './lib/search';
+import { scheduleCard, getDueCards, sortForStudy, nextReviewLabel, getRetainability } from './lib/fsrs';
+import { buildQuizSearch, buildLibrarySearch, fuseSearch } from './lib/search';
 import { play, setSFX } from './lib/sounds';
 import { celebrateXP, celebrateLevelUp, celebratePerfect, celebrateAchievement, celebrateMastery, celebrateStreak } from './lib/celebrate';
 import { renderMarkdown } from './lib/renderMarkdown';
 import { exportQuizResult, exportSchoolList, exportFlashDeck } from './lib/exportPDF';
 import { ACHIEVEMENTS, checkAchievements } from './lib/achievements';
 
-// ── Face ID imports ────────────────────────────────────────────────────────────
 import FaceEnroll from './components/FaceEnroll';
 import FaceLogin  from './components/FaceLogin';
 
@@ -354,6 +353,11 @@ export default function App() {
   const [faceDescriptor, setFaceDescriptor] = useState(null);
   const [hasFaceId,      setHasFaceId]      = useState(false);
   const [faceLoginMode,  setFaceLoginMode]  = useState(false);
+  // FIX: pendingUser holds new-user data while face setup is in progress.
+  // We do NOT call saveUser() until face enrollment succeeds or is skipped,
+  // so `user` stays null during onboarding face setup. This prevents the
+  // settings re-enroll overlay from stealing the render.
+  const [pendingUser,    setPendingUser]    = useState(null);
   const [onboardStep,    setOnboardStep]    = useState('name'); // 'name' | 'faceSetup'
 
   // ── UI state ────────────────────────────────────────────────────────────────
@@ -416,7 +420,6 @@ export default function App() {
         setMmiCount(mmi||0);
         setHasFaceId(hasId||false);
         setFaceDescriptor(desc||null);
-        // Auto-open face scanner for returning users who have no active session
         if(hasId && !u){setFaceLoginMode(true);}
         await DB.recordStudyToday();
       }catch(e){console.error('DB init error:',e);}
@@ -431,7 +434,6 @@ export default function App() {
   const saveQuizScore = useCallback(async(quizId,score)=>{ setQScores_(q=>({...q,[quizId]:score})); await DB.saveQuizScore(quizId,score); const h=await DB.getQuizHistory(); setQHistory(h); },[]);
   const saveDeck = useCallback(async(name,cards)=>{ setCDecks_(d=>({...d,[name]:cards})); await DB.saveDeck(name,cards); },[]);
   const deleteDeck_ = useCallback(async(name)=>{ setCDecks_(d=>{const nd={...d};delete nd[name];return nd;}); await DB.deleteDeck(name); },[]);
-  const savePort = useCallback((p)=>{ setPort_(p); },[]);
   const saveCatPerf = useCallback((cat,score)=>{ setCatPerf_(cp=>({...cp,[cat]:{ total:(cp[cat]?.total||0)+score, count:(cp[cat]?.count||0)+1 }})); DB.updateCatPerf(cat,score).catch(console.error); },[]);
 
   // ── Timers ───────────────────────────────────────────────────────────────────
@@ -451,7 +453,6 @@ export default function App() {
   const xpIn    = user?(user.xp||0)%250:0;
   const qTaken  = Object.keys(qScores).length;
   const avgSc   = qTaken>0?Math.round(Object.values(qScores).reduce((a,b)=>a+b,0)/qTaken):0;
-  const pomPct  = pomM==='focus'?(pomT/(25*60))*100:(pomT/(5*60))*100;
   const cats3   = ['Bio/Biochem','Chem/Phys','Psych/Soc'];
   const secAvgs = cats3.map(cat=>{const cQ=ALL_QUIZZES.filter(q=>q.cat===cat);const tk=cQ.filter(q=>qScores[q.id]!==undefined);return tk.length?Math.round(tk.reduce((s,q)=>s+qScores[q.id],0)/tk.length):null;});
   const predMCAT = secAvgs.every(v=>v!==null) ? secAvgs.reduce((s,v)=>s+scoreToSection(v),0) : null;
@@ -481,7 +482,9 @@ export default function App() {
     DB.clearAllData().then(()=>{
       setUser_(null);setPathway_({});setQScores_({});setCDecks_({});setPort_([]);
       setCatPerf_({});setAchiev_(new Set());setStreak(0);setTab('home');
-      setFaceDescriptor(null);setHasFaceId(false);setFaceLoginMode(false);setOnboardStep('name');
+      setFaceDescriptor(null);setHasFaceId(false);setFaceLoginMode(false);
+      // FIX: also clear pendingUser and onboardStep on sign-out
+      setPendingUser(null);setOnboardStep('name');
     });
     toast('Signed out. See you next time!');
   }
@@ -580,8 +583,8 @@ export default function App() {
 
   const quizFuse = useMemo(()=>buildQuizSearch(ALL_QUIZZES),[]);
   const libFuse  = useMemo(()=>buildLibrarySearch(ELIB),[]);
-  const fQuiz    = useMemo(()=>{ const s=fuseSearch(quizFuse,qSrch)||ALL_QUIZZES; return s.filter(q=>(qCat==='All'||q.cat===qCat)&&(qDiff==='All'||q.diff===qDiff)); },[qSrch,qCat,qDiff]);
-  const fLib     = useMemo(()=>{ return fuseSearch(libFuse,lSrch)||ELIB; },[lSrch]).filter(r=>lCat==='All'||r.cat===lCat);
+  const fQuiz    = useMemo(()=>{ const s=fuseSearch(quizFuse,qSrch)||ALL_QUIZZES; return s.filter(q=>(qCat==='All'||q.cat===qCat)&&(qDiff==='All'||q.diff===qDiff)); },[quizFuse,qSrch,qCat,qDiff]);
+  const fLib     = useMemo(()=>{ const res=fuseSearch(libFuse,lSrch)||ELIB; return lCat==='All'?res:res.filter(r=>r.cat===lCat); },[libFuse,lSrch,lCat]);
   const fMmi     = useMemo(()=>mTF==='All'?MMI_QS:MMI_QS.filter(q=>q.type===mTF),[mTF]);
   const mmiQ     = fMmi[mIdx]||MMI_QS[0];
   const fComp    = useMemo(()=>cF==='All'?COMPETITIONS:COMPETITIONS.filter(c=>c.type===cF||c.level===cF),[cF]);
@@ -599,15 +602,24 @@ export default function App() {
   const currentCard = deckCards[cIdx];
 
   // ── Face ID handlers ──────────────────────────────────────────────────────────
+
+  // FIX: createUserAndProceed no longer calls saveUser() immediately.
+  // Instead it stores the user object in pendingUser so `user` stays null,
+  // keeping the onboarding face-setup render path reachable.
   function createUserAndProceed() {
     if (!uname.trim()) return;
     const u = { name:uname.trim(), specialty:'internist', xp:0, streak:1, lastActive:Date.now() };
-    saveUser(u);
+    setPendingUser(u);
     setOnboardStep('faceSetup');
     toast.success(`Great to meet you, ${uname.trim()}! Let's set up Face ID…`);
   }
 
+  // FIX: commit pendingUser to DB when face enrollment succeeds
   async function handleFaceEnrollSuccess(descriptor) {
+    if (pendingUser) {
+      saveUser(pendingUser);
+      setPendingUser(null);
+    }
     setFaceDescriptor(descriptor);
     setHasFaceId(true);
     setOnboardStep('name');
@@ -615,7 +627,12 @@ export default function App() {
     toast.success('Face ID enabled! You can now log in instantly 👤', { duration:4000 });
   }
 
+  // FIX: commit pendingUser to DB when face enrollment is skipped
   function handleFaceEnrollSkip() {
+    if (pendingUser) {
+      saveUser(pendingUser);
+      setPendingUser(null);
+    }
     setOnboardStep('name');
     setTab('diagnostic');
     toast('No problem! You can set up Face ID anytime in Settings.');
@@ -628,7 +645,6 @@ export default function App() {
       await DB.recordStudyToday();
       toast.success(`Welcome back, ${u.name}! 👤`, { duration:3000 });
     } else {
-      // Edge case: descriptor exists but user record gone — fallback to name login
       setFaceLoginMode(false);
       setHasFaceId(false);
     }
@@ -644,7 +660,6 @@ export default function App() {
   // ═══ TAB RENDERS ══════════════════════════════════════════════════════════════
   const SL = ({children,extra={}}) => <div style={{fontSize:10,fontWeight:700,color:C.t3,letterSpacing:'.12em',textTransform:'uppercase',marginBottom:16,...extra}}>{children}</div>;
 
-  // ── HOME ──────────────────────────────────────────────────────────────────────
   function tHome(){
     const units=curPath?.units||[];
     return(
@@ -747,9 +762,6 @@ export default function App() {
       </div>
     );
   }
-
-  // All other tab functions are identical to the original — copy them verbatim.
-  // They are included below without modification.
 
   function tDiag(){
     if(dDone&&dRes){const path=PATHS[dRes];return(
@@ -855,7 +867,7 @@ export default function App() {
           <SL>Switch Specialty Path</SL>
           <div style={G(3,10)}>
             {Object.entries(PATHS).map(([key,p])=>(
-              <motion.div key={key} whileHover={{borderColor:`${p.accent}40`,background:`${p.accent}08`}} onClick={()=>switchPath(key)} style={{...glass2({padding:14,cursor:'pointer',border:eSpec===key?`1px solid ${p.accent}50`:undefined,transition:'all .15s'})}}>
+              <motion.div key={key} whileHover={{borderColor:`${p.accent}40`}} onClick={()=>switchPath(key)} style={{...glass2({padding:14,cursor:'pointer',border:eSpec===key?`1px solid ${p.accent}50`:undefined,transition:'all .15s'})}}>
                 <div style={{fontSize:12,fontWeight:700,color:eSpec===key?p.accent:C.t2,fontFamily:C.FD}}>{p.label}</div>
                 {eSpec===key&&<div style={{fontSize:10,color:C.t3,marginTop:2}}>Current</div>}
               </motion.div>
@@ -1372,13 +1384,10 @@ export default function App() {
     );
   }
 
-  // ── SETTINGS — with Face ID panel ──────────────────────────────────────────
   function tSettings(){
     return(
       <div style={CC({gap:22})}>
         <div><div style={lbl()}>Settings</div><h2 style={{fontSize:24,fontWeight:800,color:C.t1,fontFamily:C.FD,letterSpacing:'-.03em',margin:0}}>Account & Preferences</h2></div>
-
-        {/* Profile */}
         <div style={glass()}>
           <SL>Profile</SL>
           <div style={{...R({gap:14,marginBottom:18})}}>
@@ -1399,7 +1408,6 @@ export default function App() {
           <button style={btn()} onClick={()=>{if(!sName.trim())return;saveUser({...user,name:sName.trim()});setSN('');toast.success('Name updated!');}}>Save Name</button>
         </div>
 
-        {/* ── Face ID panel ── */}
         <div style={{...glass({border:hasFaceId?`1px solid ${C.blue}25`:undefined})}}>
           <SL>Face ID Login</SL>
           {hasFaceId ? (
@@ -1437,7 +1445,6 @@ export default function App() {
           )}
         </div>
 
-        {/* Sound toggle */}
         <div style={glass({padding:18})}>
           <SL>Preferences</SL>
           <div style={R({justifyContent:'space-between'})}>
@@ -1451,7 +1458,6 @@ export default function App() {
           </div>
         </div>
 
-        {/* Specialty path */}
         <div style={glass()}>
           <SL>Specialty Path</SL>
           <p style={{fontSize:13,color:C.t2,marginBottom:16}}>Current: <span style={{color:accent,fontWeight:700,fontFamily:C.FD}}>{curPath?.label}</span></p>
@@ -1467,14 +1473,12 @@ export default function App() {
           {sSpec&&sSpec!==eSpec&&<motion.button whileHover={{scale:1.02}} whileTap={{scale:.98}} style={{...btn(),marginTop:16}} onClick={()=>{switchPath(sSpec);setSS('');}}>Switch to {PATHS[sSpec]?.label}</motion.button>}
         </div>
 
-        {/* Data & backup */}
         <div style={glass({padding:18})}>
           <SL>Data & Backup</SL>
           <p style={{fontSize:13,color:C.t2,marginBottom:14,lineHeight:1.65}}>Export all your progress data as a JSON file. Face ID data is excluded from exports for privacy.</p>
           <button style={btnG({fontSize:12,padding:'9px 18px'})} onClick={()=>{DB.exportAllData();toast.success('Export started — check your Downloads folder');}}>📦 Export All Data</button>
         </div>
 
-        {/* Danger zone */}
         <div style={{...glass({border:`1px solid rgba(244,63,94,0.2)`})}}>
           <SL extra={{color:C.rose}}>Danger Zone</SL>
           <p style={{fontSize:13,color:C.t2,marginBottom:16,lineHeight:1.65}}>These actions are permanent and cannot be undone.</p>
@@ -1484,7 +1488,6 @@ export default function App() {
           </div>
         </div>
 
-        {/* About */}
         <div style={glass({padding:18})}>
           <div style={{fontSize:11,color:C.t3,lineHeight:1.9,fontFamily:C.FM}}>
             MedSchoolPrep v2.0 &nbsp;·&nbsp; {ALL_QUIZZES.length*15} questions &nbsp;·&nbsp; {ELIB.length} resources &nbsp;·&nbsp; {Object.keys(FLASH_DECKS).length} decks &nbsp;·&nbsp; {MMI_QS.length} MMI stations<br/>
@@ -1497,7 +1500,9 @@ export default function App() {
     );
   }
 
-  // ═══ FACE ID RE-ENROLL OVERLAY (shown from Settings) ══════════════════════
+  // ═══ FACE ID RE-ENROLL OVERLAY (Settings — existing logged-in user only) ════
+  // This block fires when user is already logged in and triggers re-enrollment.
+  // Because pendingUser is null here, the onboarding path below is not confused.
   if (onboardStep === 'faceSetup' && user) {
     return (
       <ErrorBoundary>
@@ -1524,11 +1529,35 @@ export default function App() {
     );
   }
 
+  // ═══ FACE ID SETUP — new-user onboarding ═════════════════════════════════════
+  // FIX: This block was previously unreachable because the old code called
+  // saveUser() inside createUserAndProceed(), setting `user` before this render.
+  // Now we use pendingUser so `user` stays null until face setup completes.
+  if (onboardStep === 'faceSetup' && pendingUser) {
+    return (
+      <ErrorBoundary>
+        <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:C.bg,padding:20,fontFamily:C.FB,position:'relative',overflow:'hidden'}}>
+          <Toaster position="bottom-right"/>
+          <div style={{position:'absolute',top:'-15%',right:'-5%',width:'45vw',height:'45vw',borderRadius:'50%',background:`radial-gradient(circle,rgba(45,127,255,0.1),transparent 65%)`,pointerEvents:'none'}}/>
+          <div style={{position:'absolute',bottom:'-10%',left:'-5%',width:'35vw',height:'35vw',borderRadius:'50%',background:`radial-gradient(circle,rgba(6,182,212,0.07),transparent 65%)`,pointerEvents:'none'}}/>
+          <motion.div initial={{opacity:0,y:20}} animate={{opacity:1,y:0}}
+            style={{width:'100%',maxWidth:500,position:'relative',zIndex:1,...glass({padding:0,overflow:'hidden',borderRadius:24})}}>
+            <FaceEnroll
+              accent={C.blue}
+              mode="onboarding"
+              onSuccess={handleFaceEnrollSuccess}
+              onSkip={handleFaceEnrollSkip}
+            />
+          </motion.div>
+        </div>
+      </ErrorBoundary>
+    );
+  }
+
   // ═══ ONBOARDING ════════════════════════════════════════════════════════════
   if (!dbReady) return <LoadingScreen/>;
 
   if (!user) {
-
     // ── Returning user: Face ID scanner ──────────────────────────────────────
     if (faceLoginMode && faceDescriptor) {
       return (
@@ -1558,28 +1587,6 @@ export default function App() {
       );
     }
 
-    // ── New user: Face ID setup step ──────────────────────────────────────────
-    if (onboardStep === 'faceSetup') {
-      return (
-        <ErrorBoundary>
-          <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:C.bg,padding:20,fontFamily:C.FB,position:'relative',overflow:'hidden'}}>
-            <Toaster position="bottom-right"/>
-            <div style={{position:'absolute',top:'-15%',right:'-5%',width:'45vw',height:'45vw',borderRadius:'50%',background:`radial-gradient(circle,rgba(45,127,255,0.1),transparent 65%)`,pointerEvents:'none'}}/>
-            <div style={{position:'absolute',bottom:'-10%',left:'-5%',width:'35vw',height:'35vw',borderRadius:'50%',background:`radial-gradient(circle,rgba(6,182,212,0.07),transparent 65%)`,pointerEvents:'none'}}/>
-            <motion.div initial={{opacity:0,y:20}} animate={{opacity:1,y:0}}
-              style={{width:'100%',maxWidth:500,position:'relative',zIndex:1,...glass({padding:0,overflow:'hidden',borderRadius:24})}}>
-              <FaceEnroll
-                accent={C.blue}
-                mode="onboarding"
-                onSuccess={handleFaceEnrollSuccess}
-                onSkip={handleFaceEnrollSkip}
-              />
-            </motion.div>
-          </div>
-        </ErrorBoundary>
-      );
-    }
-
     // ── Name entry (standard onboarding) ──────────────────────────────────────
     return (
       <ErrorBoundary>
@@ -1598,8 +1605,6 @@ export default function App() {
                 <span key={f} style={pill(C.s2,C.t2,{border:`1px solid ${C.b1}`,fontSize:11})}>{f}</span>
               ))}
             </div>
-
-            {/* Returning user: "Use Face ID" shortcut card */}
             {hasFaceId && faceDescriptor && (
               <motion.div whileHover={{borderColor:`${C.blue}40`,background:`rgba(45,127,255,0.06)`}}
                 onClick={()=>setFaceLoginMode(true)}
@@ -1616,7 +1621,6 @@ export default function App() {
                 </div>
               </motion.div>
             )}
-
             <div style={glass({padding:32})}>
               <span style={lbl()}>Your first name</span>
               <input
